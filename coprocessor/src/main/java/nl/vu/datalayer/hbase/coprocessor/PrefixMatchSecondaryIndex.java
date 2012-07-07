@@ -2,14 +2,15 @@ package nl.vu.datalayer.hbase.coprocessor;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.CoprocessorEnvironment;
-import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.coprocessor.BaseRegionObserver;
@@ -19,10 +20,7 @@ import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
 import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.log4j.FileAppender;
 import org.apache.log4j.Logger;
-import org.apache.log4j.PropertyConfigurator;
-import org.apache.log4j.SimpleLayout;
 
 public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 
@@ -47,19 +45,37 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 	 * Buffer for put operations - we need to do it ourselves as we can't set
 	 * autoFlush to false from the HTableInterface
 	 */
-	private ArrayList<ArrayList<Put>> batchPuts = new ArrayList<ArrayList<Put>>();
+	private ArrayList<CoprocessorDoubleBuffer> batchPuts = new ArrayList<CoprocessorDoubleBuffer>();
+
 	private int tablesNumber = 6;
 	
-	public static final int FLUSH_LIMIT = 5;//TODO set to an appropriate value
+	public static final int FLUSH_LIMIT = 3000;//TODO set to an appropriate value
 	 
-	
 	public static final String CONFIG_FILE_PATH = "file:///var/scratch/sfu200/config.properties";//TODO check 
 	public static final String COUNT_PROP = "COUNT";
 	public static final String SUFFIX_PROP = "SUFFIX";
 	public static final String ONLY_TRIPLES_PROP = "ONLY_TRIPLES";
 	
+	/**
+	 * For testing purposes: count all Put operations when the coprocessor functions
+	 * are called from multiple threads
+	 */
+	public AtomicInteger putCounter = new AtomicInteger(); 
+	
 	private ArrayList<SchemaInfo> schemas = new ArrayList<SchemaInfo>();
 	
+	/**
+	 * For testing purposes
+	 */
+	public PrefixMatchSecondaryIndex(String schemaSuffix, boolean onlyTriples, HTableInterface[] tables, ArrayList<CoprocessorDoubleBuffer> batchPuts, int tablesNumber) {
+		super();
+		this.schemaSuffix = schemaSuffix;
+		this.onlyTriples = onlyTriples;
+		this.tables = tables;
+		this.batchPuts = batchPuts;
+		this.tablesNumber = tablesNumber;
+	}
+
 	@Override
 	public void start(CoprocessorEnvironment e) throws IOException {
 		super.start(e);
@@ -79,12 +95,12 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 
 	@Override
 	public boolean preCheckAndPut(ObserverContext<RegionCoprocessorEnvironment> e, byte[] row, byte[] family, byte[] qualifier, CompareOp compareOp, WritableByteArrayComparable comparator, Put put, boolean result) throws IOException {
-		logger.info("Row: "+(row==null? null : row.length)+
-				"; Family: "+(family==null?null:family.length)+
-				"; Qualifier: "+(qualifier==null?null:qualifier.length));
+//		logger.info("Row: "+(row==null? null : row.length)+
+//				"; Family: "+(family==null?null:family.length)+
+//				"; Qualifier: "+(qualifier==null?null:qualifier.length));
 		if (qualifier!=null && qualifier.length==1 && qualifier[0]=='c'){//we consider it is a flush marker
 			if (tables!=null){
-				flushBatchPuts();
+				finalFlushBatchPuts();
 			}
 			e.bypass();
 			return false;
@@ -99,22 +115,50 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 		
 		for (int i = 1; i < tablesNumber; i++) {
 			Put newPut = build(OFFSETS[i][0], OFFSETS[i][1], OFFSETS[i][2], OFFSETS[i][3], put.getRow());
-			batchPuts.get(i-1).add(newPut);
+			batchPuts.get(i-1).getCurrentBuffer().add(newPut);
 		}
-		logger.info("New put detected: "+batchPuts.get(0).size());
+//		logger.info("New put detected");
 		
-		if (batchPuts.get(0).size() == FLUSH_LIMIT){
+		if (batchPuts.get(0).getCurrentBuffer().size() >= FLUSH_LIMIT){
 			flushBatchPuts();
 		}
 	}
 
-	private void flushBatchPuts() throws IOException {
+	final private void flushBatchPuts() throws IOException {
+		
 		for (int i=0; i<tables.length; i++) {
-			tables[i].put(batchPuts.get(i));
-			batchPuts.get(i).clear();
+			CoprocessorDoubleBuffer db = batchPuts.get(i);
+			
+			synchronized (tables[i]) {
+				if (db.getCurrentBuffer().size() >= FLUSH_LIMIT){
+					flushTable(i, db);
+				}
+			}
 		}
 		
 		logger.info("New batch of "+FLUSH_LIMIT+" puts issued");
+	}
+	
+	final private void finalFlushBatchPuts() throws IOException {
+		
+		for (int i=0; i<tables.length; i++) {
+			CoprocessorDoubleBuffer db = batchPuts.get(i);
+			
+			synchronized (tables[i]) {
+				flushTable(i, db);
+			}
+		}
+		
+		logger.info("Final batch of puts issued");
+	}
+
+	final private void flushTable(int i, CoprocessorDoubleBuffer db) throws IOException {
+		db.switchBuffers();
+		
+		List<Put> nextBuffer = db.getNextBuffer();
+		tables[i].put(nextBuffer);
+		putCounter.addAndGet(nextBuffer.size());//TODO remove in production
+		nextBuffer.clear();
 	}
 
 	final private void init(ObserverContext<RegionCoprocessorEnvironment> e) throws IOException {
@@ -136,7 +180,8 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 		
 		tables = new HTableInterface[tablesNumber-1];//all tables without SPOC
 		for (int i = 0; i < tables.length; i++) {
-			batchPuts.add(new ArrayList<Put>());
+			CoprocessorDoubleBuffer newDB = new CoprocessorDoubleBuffer();
+			batchPuts.add(newDB);
 			tables[i] = e.getEnvironment().getTable((TABLE_NAMES[i+1]+schemaSuffix).getBytes());
 		}
 		logger.info("Finished initializing tables");
@@ -182,20 +227,10 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 		
 		return newPut;
 	}
-
-	/*@Override
-	public void prePut(ObserverContext<RegionCoprocessorEnvironment> e, Put put, WALEdit edit, boolean writeToWAL) throws IOException {
-		HTableInterface table = e.getEnvironment().getTable("test2".getBytes());
-		byte []key = put.getRow(); //get the key in SPOC order
-		
-		byte []newKey = new byte[HBPrefixMatchSchema.KEY_LENGTH];
-		System.arraycopy(key, 8, newKey, 0, newKey.length-8);
-		System.arraycopy(key, 0, newKey, newKey.length-8, 8);
-		
-		Put newPut = new Put(newKey);
-		newPut.add(HBPrefixMatchSchema.COLUMN_FAMILY, HBPrefixMatchSchema.COLUMN_NAME, "".getBytes());
-		table.put(newPut);
-	}*/
+	
+	public ArrayList<CoprocessorDoubleBuffer> getBatchPuts() {
+		return batchPuts;
+	}
 
 	private class SchemaInfo{
 		private String suffix;
