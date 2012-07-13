@@ -61,7 +61,7 @@ public class PrefixMatchSecondaryIndexTest {
 				
 				ArrayList<CoprocessorDoubleBuffer> retBatchPuts = coprocessor.getBatchPuts();
 				for (int j = 0; j < retBatchPuts.size(); j++) {
-					assertTrue(retBatchPuts.get(j).getCurrentBuffer().size() == (i+1)%PrefixMatchSecondaryIndex.FLUSH_LIMIT);
+					assertTrue(retBatchPuts.get(j).getCurrentBufferSize() == (i+1)%PrefixMatchSecondaryIndex.FLUSH_LIMIT);
 					assertTrue(retBatchPuts.get(j).getNextBuffer().size() == 0);
 				}
 			}
@@ -84,6 +84,7 @@ public class PrefixMatchSecondaryIndexTest {
 		}
 		
 		coprocessor = new PrefixMatchSecondaryIndex("_TestSuffix", true, tables, batchPuts, tablesNumber);
+		coprocessor.setInitFinished(true);
 		 try {
 			coprocessor.start(env);
 		} catch (IOException e) {
@@ -96,9 +97,9 @@ public class PrefixMatchSecondaryIndexTest {
 	public void multiThreadedPrePutTest(){
 		createCoprocessorWith3Tables();
 		
-		int nThreads = 3;
+		int nThreads = 8;
 		int previous = 0;
-		int coprocessorThreadPortion = 30000;
+		int coprocessorThreadPortion = 41200;
 		
 		CoprocessorTestThread []testThreads = new CoprocessorTestThread[nThreads];
 		for (int i = 0; i < nThreads; i++) {
@@ -129,6 +130,11 @@ public class PrefixMatchSecondaryIndexTest {
 		assertTrue(coprocessor.putCounter.get() == coprocessorThreadPortion*nThreads*tables.length);
 	}
 	
-	
+	@Test 
+	public void repeatMulti(){
+		for (int i = 0; i < 200; i++) {
+			multiThreadedPrePutTest();
+		}
+	}
 
 }

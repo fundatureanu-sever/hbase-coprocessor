@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -49,7 +50,7 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 
 	private int tablesNumber = 6;
 	
-	public static final int FLUSH_LIMIT = 3000;//TODO set to an appropriate value
+	public static final int FLUSH_LIMIT = 500;//TODO set to an appropriate value
 	 
 	public static final String CONFIG_FILE_PATH = "file:///var/scratch/sfu200/config.properties";//TODO check 
 	public static final String COUNT_PROP = "COUNT";
@@ -64,6 +65,12 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 	
 	private ArrayList<SchemaInfo> schemas = new ArrayList<SchemaInfo>();
 	
+	private volatile boolean initFinished = false;
+	
+	public PrefixMatchSecondaryIndex() {
+		super();
+	}
+
 	/**
 	 * For testing purposes
 	 */
@@ -109,17 +116,18 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 	}
 
 	public void prePut(ObserverContext<RegionCoprocessorEnvironment> e, Put put, WALEdit edit, boolean writeToWAL) throws IOException {
-		if (schemaSuffix == null){
+		if (initFinished == false){
 			init(e);
+			initFinished = true;
 		}
 		
 		for (int i = 1; i < tablesNumber; i++) {
 			Put newPut = build(OFFSETS[i][0], OFFSETS[i][1], OFFSETS[i][2], OFFSETS[i][3], put.getRow());
-			batchPuts.get(i-1).getCurrentBuffer().add(newPut);
+			batchPuts.get(i-1).addPutToCurrentBuffer(newPut);
 		}
 //		logger.info("New put detected");
 		
-		if (batchPuts.get(0).getCurrentBuffer().size() >= FLUSH_LIMIT){
+		if (batchPuts.get(0).getCurrentBufferSize() >= FLUSH_LIMIT){
 			flushBatchPuts();
 		}
 	}
@@ -130,7 +138,7 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 			CoprocessorDoubleBuffer db = batchPuts.get(i);
 			
 			synchronized (tables[i]) {
-				if (db.getCurrentBuffer().size() >= FLUSH_LIMIT){
+				if (db.getCurrentBufferSize() >= FLUSH_LIMIT){
 					flushTable(i, db);
 				}
 			}
@@ -161,7 +169,11 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 		nextBuffer.clear();
 	}
 
-	final private void init(ObserverContext<RegionCoprocessorEnvironment> e) throws IOException {
+	final private synchronized void init(ObserverContext<RegionCoprocessorEnvironment> e) throws IOException {
+		
+		if (initFinished == true){//already initialized by other thread
+			return;
+		}
 		
 		String tableName = e.getEnvironment().getRegion().getRegionInfo().getTableNameAsString();
 		schemaSuffix = tableName.substring(TABLE_NAMES[SPOC].length());
@@ -184,6 +196,7 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 			batchPuts.add(newDB);
 			tables[i] = e.getEnvironment().getTable((TABLE_NAMES[i+1]+schemaSuffix).getBytes());
 		}
+		
 		logger.info("Finished initializing tables");
 	}
 
@@ -231,6 +244,17 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 	public ArrayList<CoprocessorDoubleBuffer> getBatchPuts() {
 		return batchPuts;
 	}
+	
+	
+
+	/**
+	 * For testing purposes
+	 */
+	public void setInitFinished(boolean initFinished) {
+		this.initFinished = initFinished;
+	}
+
+
 
 	private class SchemaInfo{
 		private String suffix;
