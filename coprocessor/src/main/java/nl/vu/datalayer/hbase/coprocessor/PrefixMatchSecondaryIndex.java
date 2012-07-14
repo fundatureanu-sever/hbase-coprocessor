@@ -118,7 +118,6 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 	public void prePut(ObserverContext<RegionCoprocessorEnvironment> e, Put put, WALEdit edit, boolean writeToWAL) throws IOException {
 		if (initFinished == false){
 			init(e);
-			initFinished = true;
 		}
 		
 		for (int i = 1; i < tablesNumber; i++) {
@@ -198,6 +197,7 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 		}
 		
 		logger.info("Finished initializing tables");
+		initFinished = true;
 	}
 
 	private void initSchemaInfoList() throws IOException {
@@ -218,8 +218,8 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 		String numberOfSchemasStr = prop.getProperty(COUNT_PROP, "");
 		int numberOfSchemas = Integer.parseInt(numberOfSchemasStr);
 		for (int i = 0; i < numberOfSchemas; i++) {
-			String suffix = prop.getProperty(SUFFIX_PROP, "");
-			boolean onlyTriples = Boolean.parseBoolean(prop.getProperty(ONLY_TRIPLES_PROP, ""));
+			String suffix = prop.getProperty(SUFFIX_PROP+i, "");
+			boolean onlyTriples = Boolean.parseBoolean(prop.getProperty(ONLY_TRIPLES_PROP+i, ""));
 			schemas.add(new SchemaInfo(suffix, onlyTriples));
 			logger.info("New schema added: "+suffix+" "+onlyTriples);
 		}
