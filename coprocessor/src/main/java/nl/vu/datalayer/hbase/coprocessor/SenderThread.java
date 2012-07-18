@@ -15,6 +15,8 @@ public class SenderThread extends Thread {
 	
 	public static final int [][]OFFSETS = {{0,8,16,25}, {25,0,8,17}, {9,17,0,25}, {17,25,0,9}, {8,16,24,0}, {16,8,24,0}};
 
+	private static final int MILLION = 1000000;
+
 	private LinkedBlockingQueue<Put> sharedQueue = new LinkedBlockingQueue<Put>();
 	
 	private HTableInterface []tables = null;
@@ -42,15 +44,22 @@ public class SenderThread extends Thread {
 				if (keepGoing == false)//stop gracefully
 					break;
 				
-				if (put == null)//just a timeout
+				if (put == null){//just a timeout
+					for (int i = 0; i < tables.length; i++) {
+						tables[i].flushCommits();
+					}
 					continue;
+				}
+				if (sharedQueue.size() % MILLION == 0){
+					senderLogger.info("Shared queue size: "+sharedQueue.size());
+				}
 				
 				for (int i = 1; i <= tables.length; i++) {
 					Put newPut = build(OFFSETS[i][0], OFFSETS[i][1], OFFSETS[i][2], OFFSETS[i][3], put.getRow());
 					tables[i-1].put(newPut);
 				}
-
 			}
+			senderLogger.info("Adios muchachos");
 		} catch (InterruptedException e) {
 			System.err.println("Finishing sender thread");
 			e.printStackTrace();

@@ -1,30 +1,30 @@
 package nl.vu.datalayer.hbase.coprocessor;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import java.io.IOException;
-import java.util.ArrayList;
 
 import org.apache.hadoop.hbase.CoprocessorEnvironment;
 import org.apache.hadoop.hbase.client.HTable;
-import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
-import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
 import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Matchers;
 
 public class PrefixMatchSecondaryIndexTest {
 	
 	private static final int PUTS_LIMIT = 300;
 	private CoprocessorEnvironment env;
 	private PrefixMatchSecondaryIndex coprocessor;
-	private HTableInterface [] tables;
+	private HTable [] tables;
 	
 	@Before
 	public void runBeforeEveryTest() {
@@ -58,42 +58,41 @@ public class PrefixMatchSecondaryIndexTest {
 				put.add("F".getBytes(), null, null);
 				
 				coprocessor.prePut(e, put, new WALEdit(), false);
-				
-				ArrayList<CoprocessorDoubleBuffer> retBatchPuts = coprocessor.getBatchPuts();
-				for (int j = 0; j < retBatchPuts.size(); j++) {
-					assertTrue(retBatchPuts.get(j).getCurrentBufferSize() == (i+1)%PrefixMatchSecondaryIndex.FLUSH_LIMIT);
-					assertTrue(retBatchPuts.get(j).getNextBuffer().size() == 0);
-				}
 			}
 			
 		} catch (IOException e1) {
 			e1.printStackTrace();
 			assertTrue(false);
 		}
+		
+		System.out.println("Sleeping for 1 second");
+		try {
+			Thread.sleep(1000);//sleep for a while to allow for puts to be called
+		} catch (InterruptedException e1) {
+			e1.printStackTrace();
+		}
+		System.out.println("Waking up");
+		
+		for (int i = 0; i < tables.length; i++) {
+			try {
+				verify(tables[i], times(PUTS_LIMIT)).put((Put)Matchers.notNull());
+			} catch (IOException e1) {
+				e1.printStackTrace();
+			}
+		}
 	}
 
-	private void createCoprocessorWith3Tables() {
-		ArrayList<CoprocessorDoubleBuffer> batchPuts = new ArrayList<CoprocessorDoubleBuffer>();
-		
+	private void createCoprocessorWith3Tables() {	
 		int tablesNumber = 3;
-		tables = new HTableInterface[tablesNumber-1];
+		tables = new HTable[tablesNumber-1];
 		for (int i = 0; i < tables.length; i++) {
-			CoprocessorDoubleBuffer newDB = new CoprocessorDoubleBuffer();
-			batchPuts.add(newDB);
 			tables[i] = mock(HTable.class);
 		}
 		
-		coprocessor = new PrefixMatchSecondaryIndex("_TestSuffix", true, tables, batchPuts, tablesNumber);
-		coprocessor.setInitFinished(true);
-		 try {
-			coprocessor.start(env);
-		} catch (IOException e) {
-			e.printStackTrace();
-			assertTrue(false);
-		}
+		coprocessor = new PrefixMatchSecondaryIndex("_TestSuffix", true, tables);
 	}
 	
-	@Test
+	/*@Test
 	public void multiThreadedPrePutTest(){
 		createCoprocessorWith3Tables();
 		
@@ -136,5 +135,5 @@ public class PrefixMatchSecondaryIndexTest {
 			multiThreadedPrePutTest();
 		}
 	}
-
+	*/
 }

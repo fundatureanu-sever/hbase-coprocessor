@@ -73,9 +73,7 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 	}
 
 	@Override
-	public void start(CoprocessorEnvironment e) throws IOException {
-		super.start(e);
-		
+	public void start(CoprocessorEnvironment e) throws IOException {		
 		initSecondaryIndexTableConnections(e.getConfiguration());
 		senderThread = new SenderThread(sharedQueue, tables);
 		senderThread.start();
@@ -84,14 +82,14 @@ public class PrefixMatchSecondaryIndex extends BaseRegionObserver {
 
 	@Override
 	public void stop(CoprocessorEnvironment e) throws IOException {
-		super.stop(e);
 		senderThread.pleaseStop();
+		logger.info("Requested sender thread to finish, now waiting ..");
 		try {
 			senderThread.join();
 		} catch (InterruptedException e1) {
 			e1.printStackTrace();
 		}
-		
+		logger.info("Sender thread finished");
 		if (tables != null){
 			for (int i = 0; i < tables.length; i++) {
 				tables[i].close();
