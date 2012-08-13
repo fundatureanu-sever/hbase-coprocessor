@@ -44,7 +44,7 @@ public class PrefixMatchGenerateSecondaryIndex extends BaseEndpointCoprocessor
 	
 	private HTable []tables = null;
 	 
-	public static final String CONFIG_FILE_PATH = "hdfs://fs0.cm.cluster:8020/user/sfu200/config.properties";//TODO check 
+	public static final String CONFIG_FILE_PATH = "hdfs://fs0:8020/user/sfu200/config.properties";//TODO check 
 	public static final String COUNT_PROP = "COUNT";
 	public static final String SUFFIX_PROP = "SUFFIX";
 	public static final String ONLY_TRIPLES_PROP = "ONLY_TRIPLES";
