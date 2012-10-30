@@ -85,13 +85,21 @@ public class PrefixMatchGenerateSecondaryIndex extends BaseEndpointCoprocessor
 
 	@Override
 	public void stop(CoprocessorEnvironment env) {
-		logger.info("["+Thread.currentThread().getName()+"]: Coprocessor stopping "+this);
-		
+		try {
+			stopGeneration();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	@Override
+	public void stopGeneration() throws IOException {
+		logger.info("["+Thread.currentThread().getName()+"]: Coprocessor stopping "+this+" from stopGeneration call");
 		synchronized (this) {
 			if (state == RUNNING){
 				state = STOPPING;
 				try {
-					wait(5000);//wait 5 seconds
+					wait(10000);//wait 5 seconds
 				} catch (InterruptedException e) {
 					e.printStackTrace();
 				}
@@ -105,7 +113,8 @@ public class PrefixMatchGenerateSecondaryIndex extends BaseEndpointCoprocessor
 				}
 			}
 		}
-		logger.info("["+Thread.currentThread().getName()+"]: Finished waiting for main loop, now closing");	
+		state = INIT_STOPPED;
+		logger.info("["+Thread.currentThread().getName()+"]: Finished waiting for main loop, now closing");
 	}
 
 	@Override
@@ -214,6 +223,7 @@ public class PrefixMatchGenerateSecondaryIndex extends BaseEndpointCoprocessor
 			tables[i] = new HTable(env.getConfiguration(), (TABLE_NAMES[i+1]+schemaSuffix).getBytes());
 			tables[i].setAutoFlush(false);
 			tables[i].setWriteBufferSize(40*1024*1024);
+			tables[i].prewarmRegionCache(tables[i].getRegionsInfo());
 		}
 	}
 
