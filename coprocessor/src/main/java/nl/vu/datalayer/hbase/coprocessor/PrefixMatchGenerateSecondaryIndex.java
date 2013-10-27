@@ -92,7 +92,7 @@ public class PrefixMatchGenerateSecondaryIndex extends BaseEndpointCoprocessor
 		}
 	}
 
-	@Override
+	
 	public void stopGeneration() throws IOException {
 		logger.info("["+Thread.currentThread().getName()+"]: Coprocessor stopping "+this+" from stopGeneration call");
 		synchronized (this) {
@@ -117,7 +117,7 @@ public class PrefixMatchGenerateSecondaryIndex extends BaseEndpointCoprocessor
 		logger.info("["+Thread.currentThread().getName()+"]: Finished waiting for main loop, now closing");
 	}
 
-	@Override
+	
 	public void generateSecondaryIndex() throws IOException{
 		logger.info("["+Thread.currentThread().getName()+"]: Generate secondary index "+this);
 		synchronized (this) {
