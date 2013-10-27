@@ -4,6 +4,27 @@
   <artifactId>coprocessor</artifactId>
   <version>0.0.1-SNAPSHOT</version>
   <name>HBase Coprocessors</name>
+  <repositories>
+		<repository>
+			<id>aduna-opensource.releases</id>
+			<name>Aduna Open Source - Maven releases</name>
+			<url>http://repo.aduna-software.org/maven2/releases</url>
+		</repository>
+		<repository>
+			<id>snapshots</id>
+			<name>Apache repository</name>
+			<url>https://repository.apache.org/content/groups/snapshots</url>
+		</repository>
+		<repository>
+		    <id>releases</id>
+		    <name>Apache releases</name>
+		    <url>https://repository.apache.org/content/repositories/releases/</url>
+		</repository>
+		 <repository>
+    		<id>central</id>
+    		<url>http://repo1.maven.org/maven2/</url>
+  		</repository>
+  </repositories>
   <build>
   <plugins>
    <plugin>
@@ -30,8 +51,14 @@
   	<dependency>
   		<groupId>org.apache.hbase</groupId>
   		<artifactId>hbase</artifactId>
-  		<version>0.92.0</version>
-  	</dependency>
+  		<version>0.94.0</version>
+  		<!--type>pom</type-->
+	</dependency>
+	<!--dependency>
+  		<groupId>org.apache.hbase</groupId>
+  		<artifactId>hbase-server</artifactId>
+  		<version>0.95.0</version>
+	</dependency-->
   	<dependency>
   		<groupId>org.apache.hadoop</groupId>
   		<artifactId>hadoop-core</artifactId>
