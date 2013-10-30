@@ -1,4 +1,4 @@
-package nl.vu.datalayer.hbase.coprocessor;
+package nl.vu.hbase.coprocessor.secondaryindex;
 
 import java.io.IOException;
 
