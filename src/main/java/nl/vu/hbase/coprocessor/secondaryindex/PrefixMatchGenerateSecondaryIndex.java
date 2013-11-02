@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import nl.vu.datalayer.coprocessor.schema.PrefixMatchSchema;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
@@ -26,19 +28,10 @@ import org.apache.log4j.Logger;
 public class PrefixMatchGenerateSecondaryIndex extends BaseEndpointCoprocessor
 										implements PrefixMatchProtocol{
 
-	private static final byte[] COLUMN_FAMILY_BYTES = "F".getBytes();
 	private String schemaSuffix = null;
 	private boolean onlyTriples = false;
 	
 	private Logger logger = Logger.getLogger("CoprocessorLog");
-	
-	public static final String []TABLE_NAMES = {"SPOC", "POCS", "OSPC", "OCSP", "CSPO", "CPSO"};
-	public static final int SPOC = 0;
-	public static final int POCS = 1;
-	public static final int OSPC = 2;
-	public static final int OCSP = 3;
-	public static final int CSPO = 4;
-	public static final int CPSO = 5;
 	
 	public static final int [][]OFFSETS = {{0,8,16,25}, {25,0,8,17}, {9,17,0,25}, {17,25,0,9}, {8,16,24,0}, {16,8,24,0}};
 	
@@ -140,7 +133,7 @@ public class PrefixMatchGenerateSecondaryIndex extends BaseEndpointCoprocessor
 		}
 		
 		Scan scan = new Scan();
-	    scan.addFamily(COLUMN_FAMILY_BYTES);	   
+	    scan.addFamily(PrefixMatchSchema.COLUMN_FAMILY_BYTES);	   
 	    InternalScanner scanner = env.getRegion().getScanner(scan);
 	    
 	    runMainLoop(scanner);
@@ -192,7 +185,7 @@ public class PrefixMatchGenerateSecondaryIndex extends BaseEndpointCoprocessor
 		Bytes.putBytes(destRowKeys, cOffset, backingBuffer, rowOffset+25, 8);//put C
 		
 		Put newPut = new Put(destRowKeys);
-		newPut.add(COLUMN_FAMILY_BYTES, null, null);
+		newPut.add(PrefixMatchSchema.COLUMN_FAMILY_BYTES, null, null);
 		return newPut;
 	}
 	
@@ -220,7 +213,7 @@ public class PrefixMatchGenerateSecondaryIndex extends BaseEndpointCoprocessor
 		
 		tables = new HTable[tablesNumber-1];//all tables except SPOC
 		for (int i = 0; i < tables.length; i++) {
-			tables[i] = new HTable(env.getConfiguration(), (TABLE_NAMES[i+1]+schemaSuffix).getBytes());
+			tables[i] = new HTable(env.getConfiguration(), (PrefixMatchSchema.TABLE_NAMES[i+1]+schemaSuffix).getBytes());
 			tables[i].setAutoFlush(false);
 			tables[i].setWriteBufferSize(40*1024*1024);
 			tables[i].prewarmRegionCache(tables[i].getRegionsInfo());
