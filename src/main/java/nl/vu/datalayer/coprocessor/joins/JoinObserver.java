@@ -15,18 +15,28 @@ import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.regionserver.InternalScanner;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
+import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.Pair;
 import org.apache.log4j.Logger;
 
 public class JoinObserver extends BaseRegionObserver{
 	
 	private Logger logger = Logger.getLogger("CoprocessorLog");
 	
-	private HashMap<InternalScanner, Byte> joinPositionsMap;
+	private HashMap<InternalScanner, Pair<Byte, byte[]>> joinPositionsMap;
+	private HashMap<String, int[]> tablesToOffsets;
 	
+	public static final int TYPED_ID_SIZE = 9;
+	public static final int BASE_ID_SIZE = 8;
 	
 	public JoinObserver() {
 		super();
-		joinPositionsMap = new HashMap<InternalScanner, Byte>();
+		joinPositionsMap = new HashMap<InternalScanner, Pair<Byte, byte[]>>();
+		tablesToOffsets = new HashMap<String, int[]>();
+		
+		for (int i = 0; i < PrefixMatchSchema.TABLE_NAMES.length; i++) {
+			tablesToOffsets.put(PrefixMatchSchema.TABLE_NAMES[i], PrefixMatchSchema.OFFSETS[i]);
+		}
 	}
 
 	@Override
@@ -41,11 +51,13 @@ public class JoinObserver extends BaseRegionObserver{
 			
 			byte[] colBytes = columns.iterator().next();
 			if (colBytes.length == 1) {
-				joinPositionsMap.put(s, colBytes[0]);
+				joinPositionsMap.put(s, Pair.newPair(colBytes[0], scan.getStartRow()));
 				//reset the column qualifier of the scan
 				byte []newCol= PrefixMatchSchema.COLUMN_BYTES;
 				columns.clear();
 				columns.add(newCol);
+				
+				//TODO get variable names/ids from the engine
 			}
 		}		
 		
@@ -68,11 +80,43 @@ public class JoinObserver extends BaseRegionObserver{
 			List<Result> results, int limit, boolean hasMore)
 			throws IOException {
 		
-		byte joinPosition = joinPositionsMap.get(s);
-		switch (joinPosition){
+		byte joinPosition = joinPositionsMap.get(s).getFirst();
+		
+		for (Result result : results) {
+			byte[] rowKey = result.getRow();
 			
+			byte[] joinKey = extractJoinKey(rowKey, joinPosition, e.getEnvironment().getRegion().getTableDesc().getNameAsString());
+			//TODO create columns with corresponding variable names/ids
 		}
 		return super.postScannerNext(e, s, results, limit, hasMore);
+	}
+
+	private byte[] extractJoinKey(byte[] rowKey, byte joinPosition, String tableName) {
+		int joinKeyLength = Integer.bitCount(joinPosition&0x000000ff)*BASE_ID_SIZE;
+		byte []joinKey;
+		if ((joinPosition & (byte) 0x02) == 1) {//join on object
+			joinKeyLength++;
+			joinKey = new byte[joinKeyLength];	
+		}
+		else{
+			joinKey = new byte[joinKeyLength];
+		}
+		
+		int currentOffset = 0;
+		int []offsets = tablesToOffsets.get(tableName);
+		if ((joinPosition & (byte) 0x08) == 1) {//join on subject
+			Bytes.putBytes(joinKey, currentOffset, rowKey, offsets[0], BASE_ID_SIZE);
+			currentOffset+=BASE_ID_SIZE;
+		}
+		if ((joinPosition & (byte) 0x04) == 1) {//join on predicate
+			Bytes.putBytes(joinKey, currentOffset, rowKey, offsets[1], BASE_ID_SIZE);
+			currentOffset+=BASE_ID_SIZE;
+		}
+		if ((joinPosition & (byte) 0x02) == 1) {//join on object
+			Bytes.putBytes(joinKey, currentOffset, rowKey, offsets[2], TYPED_ID_SIZE);
+		}
+		
+		return joinKey;
 	}
 	
 	

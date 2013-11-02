@@ -33,8 +33,6 @@ public class PrefixMatchGenerateSecondaryIndex extends BaseEndpointCoprocessor
 	
 	private Logger logger = Logger.getLogger("CoprocessorLog");
 	
-	public static final int [][]OFFSETS = {{0,8,16,25}, {25,0,8,17}, {9,17,0,25}, {17,25,0,9}, {8,16,24,0}, {16,8,24,0}};
-	
 	private HTable []tables = null;
 	 
 	public static final String CONFIG_FILE_PATH = "hdfs://fs0:8020/user/sfu200/config.properties";//TODO check 
@@ -165,7 +163,7 @@ public class PrefixMatchGenerateSecondaryIndex extends BaseEndpointCoprocessor
 				//logger.info("[" + Thread.currentThread().getName() + "]: Processing new element");
 
 				for (int i = 1; i <= tables.length; i++) {
-					Put newPut = build(OFFSETS[i][0], OFFSETS[i][1], OFFSETS[i][2], OFFSETS[i][3], onlyOne);
+					Put newPut = build(PrefixMatchSchema.OFFSETS[i][0], PrefixMatchSchema.OFFSETS[i][1], PrefixMatchSchema.OFFSETS[i][2], PrefixMatchSchema.OFFSETS[i][3], onlyOne);
 					tables[i-1].put(newPut);
 				}
 			} while (keepGoing && (state == RUNNING));
