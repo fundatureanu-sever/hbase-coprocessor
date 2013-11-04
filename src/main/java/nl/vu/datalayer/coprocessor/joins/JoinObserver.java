@@ -8,7 +8,6 @@ import java.util.NavigableSet;
 
 import nl.vu.datalayer.coprocessor.schema.PrefixMatchSchema;
 
-import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
@@ -19,7 +18,6 @@ import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.regionserver.InternalScanner;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.hbase.util.Pair;
 import org.apache.log4j.Logger;
 
 public class JoinObserver extends BaseRegionObserver{
@@ -49,7 +47,7 @@ public class JoinObserver extends BaseRegionObserver{
 	public static int [] tableOffsets = null; //TODO remove static
 	public static int tableIndex; //TODO remove static
 	
-	private HTable joinTable;
+	private HTable joinTable=null;
 	
 	public JoinObserver() {
 		super();
@@ -77,6 +75,8 @@ public class JoinObserver extends BaseRegionObserver{
 			logger.error("Could not initialize tableOffsets for the table: "+currentTable);
 		}
 		
+		logger.info("preOpen: Successful initialization");
+		
 		super.preOpen(e);
 	}
 
@@ -86,7 +86,7 @@ public class JoinObserver extends BaseRegionObserver{
 		NavigableSet<byte []> columns = familyMap.get(PrefixMatchSchema.COLUMN_FAMILY_BYTES);
 		if (columns!=null){
 			if (columns.size()!=1){
-				logger.error("[JoinObserver] Expecting one column in the scanner");
+				logger.info("[JoinObserver] Expecting one column in the scanner");
 				return super.preScannerOpen(e, scan, s);
 			}
 			
@@ -94,8 +94,8 @@ public class JoinObserver extends BaseRegionObserver{
 			if (colBytes.length > 0) {
 				TripleJoinInfo tripleJoinInfo = new TripleJoinInfo(colBytes, scan.getStartRow());
 				if (tripleJoinInfo.checkLengthParamters()==false){
-					String errMessage = "Sum of lengths for prefix, join key and non-join ids != 3";
-					logger.error("[JoinObserver] "+errMessage);
+					String errMessage = "[JoinObserver] preScannerOpen: Sum of lengths for prefix, join key and non-join ids != 3";
+					logger.error(errMessage);
 					throw new IOException(errMessage);
 				}
 				
@@ -104,6 +104,8 @@ public class JoinObserver extends BaseRegionObserver{
 				byte []newCol= PrefixMatchSchema.COLUMN_BYTES;
 				columns.clear();
 				columns.add(newCol);
+				
+				logger.info("[JoinObserver] preScannerOpen: Successfully reset column from coprocessor");
 			}
 		}		
 		
@@ -127,6 +129,10 @@ public class JoinObserver extends BaseRegionObserver{
 			throws IOException {
 		
 		TripleJoinInfo tripleJoinInfo = joinPositionsMap.get(s);
+		if (tripleJoinInfo==null){
+			return super.postScannerNext(e, s, results, limit, hasMore);
+		}
+		logger.info("[JoinObserver] postScannerNext: Found the InternalScanner in the internal map");
 		
 		for (Result result : results) {
 			byte[] rowKey = result.getRow();
@@ -140,6 +146,7 @@ public class JoinObserver extends BaseRegionObserver{
 						new byte[]{tripleJoinInfo.getVariableIds()[i]}, 
 						nonJoinValues[i]);
 				joinTable.put(put);
+				logger.info("[JoinObserver] postScannerNext: Successfully inserted in the join table");
 			}
 			
 		}
@@ -216,6 +223,8 @@ public class JoinObserver extends BaseRegionObserver{
 	
 	
 	
+	
+	
 	public static void main(String[] args) {
 		tableIndex = PrefixMatchSchema.CSPO;
 		tableOffsets = PrefixMatchSchema.OFFSETS[tableIndex];
@@ -246,6 +255,21 @@ public class JoinObserver extends BaseRegionObserver{
 		
 	}
 	
+	
+
+	@Override
+	public void postClose(ObserverContext<RegionCoprocessorEnvironment> e,
+			boolean abortRequested) {
+		try {
+			if (joinTable==null){
+				joinTable.close();
+			}
+		} catch (IOException e1) {
+			e1.printStackTrace();
+		}
+		super.postClose(e, abortRequested);
+	}
+
 	public static String hexaString(byte []b, int offset, int length){
 		String ret = "";
 		for (int i = offset; i < length; i++) {
