@@ -24,6 +24,10 @@
     		<id>central</id>
     		<url>http://repo1.maven.org/maven2/</url>
   		</repository>
+  		<repository>
+      		<id>sonatype release</id>
+      		<url>https://oss.sonatype.org/content/repositories/releases/</url>
+    	</repository>
   </repositories>
   <build>
   <plugins>
@@ -71,6 +75,11 @@
   		<groupId>org.apache.hadoop</groupId>
   		<artifactId>hadoop-core</artifactId>
   		<version>1.0.0</version>
+  	</dependency>
+  	<dependency>
+    	<groupId>com.sematext.hbasewd</groupId>
+    	<artifactId>hbasewd</artifactId>
+    	<version>0.1.0</version>
   	</dependency>
   	<dependency>
 		<groupId>org.mockito</groupId>

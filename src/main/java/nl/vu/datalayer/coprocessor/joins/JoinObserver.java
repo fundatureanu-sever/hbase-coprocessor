@@ -27,9 +27,6 @@ public class JoinObserver extends BaseRegionObserver{
 	public static final int O = 0x02;
 	public static final int C = 0x01;
 	
-	private static byte STRING_TYPE = 0;
-	private static byte NUMERICAL_TYPE = 1;
-	
 	public static final byte[][]KEY_ENCODINGS = 
 		{{0x00, S, S|P, S|P|O }, 
 		{0x00, P, P|O, P|O,C }, 
@@ -37,10 +34,14 @@ public class JoinObserver extends BaseRegionObserver{
 		{0x00, O, O|C, O|C|S }, 
 		{0x00, C, C|S, C|S|P }, 
 		{0x00, C, C|P, C|P|S }};
-
+	
+	public static byte STRING_TYPE = 0;
+	public static byte NUMERICAL_TYPE = 1;
+	
 	private Logger logger = Logger.getLogger("CoprocessorLog");
 	
-	private HashMap<InternalScanner, TripleJoinInfo> joinPositionsMap;
+	private HashMap<InternalScanner, MetaInfo> metaInfoMap;
+	private HashMap<Scan, MetaInfo> tempMetaInfoMap;
 	
 	public static final int TYPED_ID_SIZE = 9;
 	public static final int BASE_ID_SIZE = 8;
@@ -51,13 +52,15 @@ public class JoinObserver extends BaseRegionObserver{
 	
 	public JoinObserver() {
 		super();
-		joinPositionsMap = new HashMap<InternalScanner, TripleJoinInfo>(); 
+		metaInfoMap = new HashMap<InternalScanner, MetaInfo>(); 
+		tempMetaInfoMap = new HashMap<Scan, MetaInfo>();
 	}
 
 	@Override
 	public void preOpen(ObserverContext<RegionCoprocessorEnvironment> e) {
 		try {
 			joinTable = new HTable(e.getEnvironment().getConfiguration(), PrefixMatchSchema.JOIN_TABLE_NAME);
+			joinTable.setAutoFlush(false);
 		} catch (IOException exc) {
 			logger.error("Unable to initialize JOIN table: "+exc.getMessage());
 		}
@@ -92,14 +95,14 @@ public class JoinObserver extends BaseRegionObserver{
 			
 			byte[] colBytes = columns.iterator().next();
 			if (colBytes.length > 0) {
-				TripleJoinInfo tripleJoinInfo = new TripleJoinInfo(colBytes, scan.getStartRow());
-				if (tripleJoinInfo.checkLengthParamters()==false){
+				MetaInfo metaInfo = new MetaInfo(colBytes, scan.getStartRow(), tableIndex);
+				if (metaInfo.checkLengthParamters()==false){
 					String errMessage = "[JoinObserver] preScannerOpen: Sum of lengths for prefix, join key and non-join ids != 3";
 					logger.error(errMessage);
 					throw new IOException(errMessage);
 				}
 				
-				joinPositionsMap.put(s, tripleJoinInfo);
+				tempMetaInfoMap.put(scan, metaInfo);
 				//reset the column qualifier of the scan
 				byte []newCol= PrefixMatchSchema.COLUMN_BYTES;
 				columns.clear();
@@ -113,13 +116,16 @@ public class JoinObserver extends BaseRegionObserver{
 	}
 
 	@Override
-	public boolean preScannerNext(
-			ObserverContext<RegionCoprocessorEnvironment> e, InternalScanner s,
-			List<Result> results, int limit, boolean hasMore)
-			throws IOException {
-		
-		
-		return super.preScannerNext(e, s, results, limit, hasMore);
+	public RegionScanner postScannerOpen(ObserverContext<RegionCoprocessorEnvironment> e, Scan scan, RegionScanner s) throws IOException {
+		MetaInfo tjInfo = tempMetaInfoMap.get(scan);
+		if (tjInfo!=null){
+			metaInfoMap.put(s, tjInfo);
+			tempMetaInfoMap.remove(scan);
+		}
+		else{
+			logger.error("[JoinObserver] postScannerOpen: Could not passed meta info forward");
+		}
+		return super.postScannerOpen(e, scan, s);
 	}
 
 	@Override
@@ -128,11 +134,12 @@ public class JoinObserver extends BaseRegionObserver{
 			List<Result> results, int limit, boolean hasMore)
 			throws IOException {
 		
-		TripleJoinInfo tripleJoinInfo = joinPositionsMap.get(s);
+		MetaInfo tripleJoinInfo = metaInfoMap.get(s);
 		if (tripleJoinInfo==null){
+			logger.info("[JoinObserver] postScannerNext: InternalScanner not found in the internal map "+s.toString());
 			return super.postScannerNext(e, s, results, limit, hasMore);
 		}
-		logger.info("[JoinObserver] postScannerNext: Found the InternalScanner in the internal map");
+		//logger.info("[JoinObserver] postScannerNext: Found the InternalScanner in the internal map");
 		
 		for (Result result : results) {
 			byte[] rowKey = result.getRow();
@@ -143,17 +150,25 @@ public class JoinObserver extends BaseRegionObserver{
 			for (int i = 0; i < nonJoinValues.length; i++) {
 				Put put = new Put(joinKey);
 				put.add(PrefixMatchSchema.JOIN_COL_FAM_BYTES, 
-						new byte[]{tripleJoinInfo.getVariableIds()[i]}, 
+						new byte[]{tripleJoinInfo.getTripleId(),tripleJoinInfo.getVariableIds()[i]}, 
 						nonJoinValues[i]);
 				joinTable.put(put);
-				logger.info("[JoinObserver] postScannerNext: Successfully inserted in the join table");
+				logger.info("[JoinObserver] postScannerNext: Successfully inserted in the join table a non join value");
+			}
+			
+			if (nonJoinValues.length==0){
+				Put put = new Put(joinKey);
+				put.add(PrefixMatchSchema.JOIN_COL_FAM_BYTES, 
+						new byte[]{tripleJoinInfo.getTripleId()}, null);
+				joinTable.put(put);
+				logger.info("[JoinObserver] postScannerNext: Successfully inserted in the join table an empty non join value");
 			}
 			
 		}
 		return super.postScannerNext(e, s, results, limit, hasMore);
 	}
 
-	public static byte[] extractJoinKeyAndNonJoinValues(byte[] rowKey, TripleJoinInfo tripleJoinInfo, byte[][] nonJoinValues) {	
+	public static byte[] extractJoinKeyAndNonJoinValues(byte[] rowKey, MetaInfo tripleJoinInfo, byte[][] nonJoinValues) {	
 		byte startRowKeyPosition = tripleJoinInfo.getStartRowKeyPositions();
 		byte joinPosition = tripleJoinInfo.getJoinPosition();
 		
@@ -205,25 +220,6 @@ public class JoinObserver extends BaseRegionObserver{
 		
 		return joinKey;
 	}
-
-	/*private static byte[] allocJoinKey(byte joinPosition, byte objectType) {
-		byte[] joinKey;
-		
-		int joinKeyLength = Integer.bitCount(joinPosition&0x000000ff)*BASE_ID_SIZE;
-		if ((joinPosition & (byte) O) == O &&
-				objectType == NUMERICAL_TYPE) {//join on object
-			joinKeyLength++;
-			
-		}
-		else{
-			joinKey = new byte[joinKeyLength];
-		}
-		return joinKey;
-	}*/
-	
-	
-	
-	
 	
 	public static void main(String[] args) {
 		tableIndex = PrefixMatchSchema.CSPO;
@@ -235,7 +231,7 @@ public class JoinObserver extends BaseRegionObserver{
 								(byte)0xf8/*, (byte)0xf5*/ };
 		
 		byte[] startRow = new byte[]{};//0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
-		TripleJoinInfo joinInfo = new TripleJoinInfo(inputQualifier, startRow);
+		MetaInfo joinInfo = new MetaInfo(inputQualifier, startRow, tableIndex);
 		if (joinInfo.checkLengthParamters()==false){
 			System.err.println("Cacat");
 			System.exit(-1);
@@ -254,14 +250,20 @@ public class JoinObserver extends BaseRegionObserver{
 		}
 		
 	}
-	
-	
+
+	@Override
+	public void postScannerClose(ObserverContext<RegionCoprocessorEnvironment> e, InternalScanner s) throws IOException {
+		if (joinTable!=null){
+			joinTable.flushCommits();
+		}
+		super.postScannerClose(e, s);
+	}
 
 	@Override
 	public void postClose(ObserverContext<RegionCoprocessorEnvironment> e,
 			boolean abortRequested) {
 		try {
-			if (joinTable==null){
+			if (joinTable!=null){
 				joinTable.close();
 			}
 		} catch (IOException e1) {
@@ -277,84 +279,5 @@ public class JoinObserver extends BaseRegionObserver{
 		}
 		return ret;
 	}
-	
-	//ASSUMPTION: expecting the input qualifier bytes to be
-	// - 1 byte - encoding of join positions
-	// - 1 byte id - for each variable id in a non-join position (in SPOC order)
-	// example: S ?p ?o - join by ?o
-	//			S - rowkey
-	//			joinByte - 0x02 (bit encoding of object position)
-	//			id(?p) - 1 byte id which will be used in the join table
-	private static class TripleJoinInfo{
-		private static final int TRIPLE_SIZE = 3;
-		
-		private byte joinPosition;
-		private byte[] variableIds;
-		private byte[] startRow;
-		private byte startRowKeyPositions;
-		private byte startRowNumberOfElems;
-		private int joinKeyLength;
-		private int joinNumberOfElems;
-
-		//private byte objectType;
-
-		public TripleJoinInfo(byte[] inputQualifier, byte[] startRow) {
-			super();
-			this.joinPosition = inputQualifier[0];
-			this.variableIds = Bytes.tail(inputQualifier, inputQualifier.length-1);
-			this.startRow = startRow;
-			startRowNumberOfElems = (byte)((startRow.length+1)/BASE_ID_SIZE);
-			startRowKeyPositions = KEY_ENCODINGS[tableIndex][startRowNumberOfElems];
-			
-			joinNumberOfElems = bitCount(joinPosition);
-			joinKeyLength = joinNumberOfElems*BASE_ID_SIZE;			
-		}
-		
-		private int bitCount(byte b){
-			int count = 0;
-			for (int i = 0; i < 4; i++) {
-				if ( (b & 1) == 1){
-					count++;
-				}
-				b = (byte)(b>>1);
-			}
-			
-			return count;
-		}
-		
-		public boolean checkLengthParamters(){
-			return (joinNumberOfElems+startRowNumberOfElems+variableIds.length==TRIPLE_SIZE);
-		}
-		
-		public byte getJoinPosition(){
-			return joinPosition;
-		}
-		
-		public byte[] getVariableIds(){
-			return variableIds;
-		}
-		
-		public byte[] getStartRow(){
-			return startRow;
-		}
-		
-		public byte getStartRowKeyPositions(){
-			return startRowKeyPositions;
-		}
-		
-		public int getJoinKeyLength() {
-			return joinKeyLength;
-		}
-		
-		public void adjustJoinKeyLength(byte objectType){
-			if ((joinPosition & (byte) O) == O) {			
-				if (objectType == NUMERICAL_TYPE) {//join on object
-					joinKeyLength++;
-				}
-			}	
-		}
-		
-	}
-	
 	
 }
