@@ -3,6 +3,7 @@ package nl.vu.datalayer.coprocessor.joins;
 import org.apache.hadoop.hbase.util.Bytes;
 
 /**ASSUMPTION: expecting the input qualifier bytes to be
+ * - 2 bytes - join id
  * - 1 byte - triple id
  * - 1 byte - encoding of join positions
  * - 1 byte id - for each variable id in a non-join position (in SPOC order)
@@ -16,6 +17,7 @@ import org.apache.hadoop.hbase.util.Bytes;
 class MetaInfo{
 	private static final int TRIPLE_SIZE = 3;
 	
+	private short joinId;
 	private byte tripleId;
 	private byte joinPosition;
 	private byte[] variableIds;
@@ -28,10 +30,11 @@ class MetaInfo{
 
 	public MetaInfo(byte[] inputQualifier, byte[] startRow, int tableIndex) {
 		super();
-		this.tripleId = inputQualifier[0];
-		this.joinPosition = inputQualifier[1];
-		this.variableIds = Bytes.tail(inputQualifier, inputQualifier.length-2);
-		startRowNumberOfElems = (byte)((startRow.length+1)/JoinObserver.BASE_ID_SIZE);
+		this.joinId = Bytes.toShort(inputQualifier);
+		this.tripleId = inputQualifier[2];
+		this.joinPosition = inputQualifier[3];
+		this.variableIds = Bytes.tail(inputQualifier, inputQualifier.length-4);
+		startRowNumberOfElems = (byte)(startRow.length/JoinObserver.BASE_ID_SIZE);
 		startRowKeyPositions = JoinObserver.KEY_ENCODINGS[tableIndex][startRowNumberOfElems];
 		
 		joinNumberOfElems = bitCount(joinPosition);
@@ -54,6 +57,10 @@ class MetaInfo{
 		return (joinNumberOfElems+startRowNumberOfElems+variableIds.length==TRIPLE_SIZE);
 	}
 	
+	public short getJoinId() {
+		return joinId;
+	}
+
 	public byte getTripleId() {
 		return tripleId;
 	}

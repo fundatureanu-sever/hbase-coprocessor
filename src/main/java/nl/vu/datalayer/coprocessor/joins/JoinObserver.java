@@ -1,6 +1,7 @@
 package nl.vu.datalayer.coprocessor.joins;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -8,6 +9,7 @@ import java.util.NavigableSet;
 
 import nl.vu.datalayer.coprocessor.schema.PrefixMatchSchema;
 
+import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
@@ -19,6 +21,9 @@ import org.apache.hadoop.hbase.regionserver.InternalScanner;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.log4j.Logger;
+
+import com.sematext.hbase.wd.AbstractRowKeyDistributor;
+import com.sematext.hbase.wd.RowKeyDistributorByHashPrefix;
 
 public class JoinObserver extends BaseRegionObserver{
 	
@@ -45,15 +50,19 @@ public class JoinObserver extends BaseRegionObserver{
 	
 	public static final int TYPED_ID_SIZE = 9;
 	public static final int BASE_ID_SIZE = 8;
-	public static int [] tableOffsets = null; //TODO remove static
-	public static int tableIndex; //TODO remove static
+	
+	private static final int BUCKET_COUNT = 8;//TODO should be a parameter
+	public int [] tableOffsets = null; //add this for testing in main
+	public int tableIndex; //add this for testing in main
 	
 	private HTable joinTable=null;
+	private AbstractRowKeyDistributor keyDistributor;
 	
 	public JoinObserver() {
 		super();
 		metaInfoMap = new HashMap<InternalScanner, MetaInfo>(); 
 		tempMetaInfoMap = new HashMap<Scan, MetaInfo>();
+		//logger.info("Observer contructor called");
 	}
 
 	@Override
@@ -65,7 +74,8 @@ public class JoinObserver extends BaseRegionObserver{
 			logger.error("Unable to initialize JOIN table: "+exc.getMessage());
 		}
 		
-		String currentTable = e.getEnvironment().getRegion().getTableDesc().getNameAsString();
+		String currentTable = e.getEnvironment().getRegion().getTableDesc().getNameAsString();	
+		
 		for (int i = 0; i < PrefixMatchSchema.TABLE_NAMES.length; i++) {
 			if (PrefixMatchSchema.TABLE_NAMES[i].equals(currentTable)){
 				tableOffsets = PrefixMatchSchema.OFFSETS[i];
@@ -78,7 +88,9 @@ public class JoinObserver extends BaseRegionObserver{
 			logger.error("Could not initialize tableOffsets for the table: "+currentTable);
 		}
 		
-		logger.info("preOpen: Successful initialization");
+		keyDistributor = new RowKeyDistributorByHashPrefix(new RowKeyDistributorByHashPrefix.OneByteSimpleHash(BUCKET_COUNT));
+		
+		logger.info("preOpen: Successful initialization "+currentTable+" "+this.toString());
 		
 		super.preOpen(e);
 	}
@@ -95,6 +107,8 @@ public class JoinObserver extends BaseRegionObserver{
 			
 			byte[] colBytes = columns.iterator().next();
 			if (colBytes.length > 0) {
+				logger.info(PrefixMatchSchema.TABLE_NAMES[tableIndex]+" preScannerOpen: inputQualifier: "+hexaString(colBytes, 0, colBytes.length)+
+									" startRowKey: "+hexaString(scan.getStartRow(), 0, scan.getStartRow().length));
 				MetaInfo metaInfo = new MetaInfo(colBytes, scan.getStartRow(), tableIndex);
 				if (metaInfo.checkLengthParamters()==false){
 					String errMessage = "[JoinObserver] preScannerOpen: Sum of lengths for prefix, join key and non-join ids != 3";
@@ -108,7 +122,7 @@ public class JoinObserver extends BaseRegionObserver{
 				columns.clear();
 				columns.add(newCol);
 				
-				logger.info("[JoinObserver] preScannerOpen: Successfully reset column from coprocessor");
+				logger.info(PrefixMatchSchema.TABLE_NAMES[tableIndex]+"[JoinObserver] preScannerOpen: Successfully reset column from coprocessor");
 			}
 		}		
 		
@@ -117,13 +131,13 @@ public class JoinObserver extends BaseRegionObserver{
 
 	@Override
 	public RegionScanner postScannerOpen(ObserverContext<RegionCoprocessorEnvironment> e, Scan scan, RegionScanner s) throws IOException {
-		MetaInfo tjInfo = tempMetaInfoMap.get(scan);
-		if (tjInfo!=null){
-			metaInfoMap.put(s, tjInfo);
+		MetaInfo metaInfo = tempMetaInfoMap.get(scan);
+		if (metaInfo!=null){
+			metaInfoMap.put(s, metaInfo);
 			tempMetaInfoMap.remove(scan);
 		}
 		else{
-			logger.error("[JoinObserver] postScannerOpen: Could not passed meta info forward");
+			logger.error("[JoinObserver] postScannerOpen: Could not pass meta info forward");
 		}
 		return super.postScannerOpen(e, scan, s);
 	}
@@ -134,8 +148,8 @@ public class JoinObserver extends BaseRegionObserver{
 			List<Result> results, int limit, boolean hasMore)
 			throws IOException {
 		
-		MetaInfo tripleJoinInfo = metaInfoMap.get(s);
-		if (tripleJoinInfo==null){
+		MetaInfo metaInfo = metaInfoMap.get(s);
+		if (metaInfo==null){
 			logger.info("[JoinObserver] postScannerNext: InternalScanner not found in the internal map "+s.toString());
 			return super.postScannerNext(e, s, results, limit, hasMore);
 		}
@@ -144,31 +158,38 @@ public class JoinObserver extends BaseRegionObserver{
 		for (Result result : results) {
 			byte[] rowKey = result.getRow();
 			
-			byte[][] nonJoinValues = new byte[tripleJoinInfo.getVariableIds().length][];
-			byte[] joinKey = extractJoinKeyAndNonJoinValues(rowKey, tripleJoinInfo, nonJoinValues);
+			byte[][] nonJoinValues = new byte[metaInfo.getVariableIds().length][];
+			byte[] joinKey = extractJoinKeyAndNonJoinValues(rowKey, metaInfo, nonJoinValues);
+			byte []joinIdBytes = Bytes.toBytes(metaInfo.getJoinId());			
+			byte[] distributedKey = keyDistributor.getDistributedKey(Bytes.add(joinIdBytes,joinKey));
 			
 			for (int i = 0; i < nonJoinValues.length; i++) {
-				Put put = new Put(joinKey);
+				Put put = new Put(distributedKey);	
 				put.add(PrefixMatchSchema.JOIN_COL_FAM_BYTES, 
-						new byte[]{tripleJoinInfo.getTripleId(),tripleJoinInfo.getVariableIds()[i]}, 
+						new byte[]{metaInfo.getTripleId(),metaInfo.getVariableIds()[i]}, 
 						nonJoinValues[i]);
 				joinTable.put(put);
-				logger.info("[JoinObserver] postScannerNext: Successfully inserted in the join table a non join value");
+				logger.info(PrefixMatchSchema.TABLE_NAMES[tableIndex]+"[JoinObserver] postScannerNext: Successfully inserted in the join table a non join value");
 			}
 			
 			if (nonJoinValues.length==0){
-				Put put = new Put(joinKey);
+				Put put = new Put(distributedKey);
 				put.add(PrefixMatchSchema.JOIN_COL_FAM_BYTES, 
-						new byte[]{tripleJoinInfo.getTripleId()}, null);
+						new byte[]{metaInfo.getTripleId()}, null);
 				joinTable.put(put);
-				logger.info("[JoinObserver] postScannerNext: Successfully inserted in the join table an empty non join value");
-			}
-			
+				logger.info(PrefixMatchSchema.TABLE_NAMES[tableIndex]+"[JoinObserver] postScannerNext: Successfully inserted in the join table an empty non join value");
+			}			
 		}
+		
+		if (results!=null && results.size()>0){
+			results.clear();
+			results.add(new Result(new KeyValue[]{KeyValue.LOWESTKEY}));//add dummy just to keep the scanner going
+		}
+		
 		return super.postScannerNext(e, s, results, limit, hasMore);
 	}
 
-	public static byte[] extractJoinKeyAndNonJoinValues(byte[] rowKey, MetaInfo tripleJoinInfo, byte[][] nonJoinValues) {	
+	public byte[] extractJoinKeyAndNonJoinValues(byte[] rowKey, MetaInfo tripleJoinInfo, byte[][] nonJoinValues) {	
 		byte startRowKeyPosition = tripleJoinInfo.getStartRowKeyPositions();
 		byte joinPosition = tripleJoinInfo.getJoinPosition();
 		
@@ -221,14 +242,14 @@ public class JoinObserver extends BaseRegionObserver{
 		return joinKey;
 	}
 	
-	public static void main(String[] args) {
+	/*public static void main(String[] args) {
 		tableIndex = PrefixMatchSchema.CSPO;
 		tableOffsets = PrefixMatchSchema.OFFSETS[tableIndex];
 		int variablesLength=1;
 		byte[][] nonJoinValues = new byte[variablesLength][];
 		
 		byte[] inputQualifier = { O|P,//JOIN KEY,
-								(byte)0xf8/*, (byte)0xf5*/ };
+								(byte)0xf8/*, (byte)0xf5 };
 		
 		byte[] startRow = new byte[]{};//0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
 		MetaInfo joinInfo = new MetaInfo(inputQualifier, startRow, tableIndex);
@@ -247,9 +268,8 @@ public class JoinObserver extends BaseRegionObserver{
 		System.out.println("Join Key: "+hexaString(joinKey, 0, joinKey.length));
 		for (byte[] nonJ : nonJoinValues) {
 			System.out.println("Non Join Value: "+hexaString(nonJ, 0, nonJ.length));
-		}
-		
-	}
+		}		
+	}*/
 
 	@Override
 	public void postScannerClose(ObserverContext<RegionCoprocessorEnvironment> e, InternalScanner s) throws IOException {

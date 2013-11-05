@@ -14,8 +14,8 @@ public class PrefixMatchSchema {
 	public static final int CSPO = 4;
 	public static final int CPSO = 5;
 	
-	public static final String JOIN_TABLE_NAME = "JOIN_TABLE";//TODO should be multiple tables
-	public static final byte[] JOIN_COL_FAM_BYTES = "J".getBytes();
+	public static final String JOIN_TABLE_NAME = "JOIN";//TODO should be multiple tables
 	
+	public static final byte[] JOIN_COL_FAM_BYTES = "J".getBytes();
 
 }
