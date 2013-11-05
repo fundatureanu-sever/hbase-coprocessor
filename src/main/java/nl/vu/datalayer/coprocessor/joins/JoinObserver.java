@@ -1,7 +1,6 @@
 package nl.vu.datalayer.coprocessor.joins;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -10,7 +9,9 @@ import java.util.NavigableSet;
 import nl.vu.datalayer.coprocessor.schema.PrefixMatchSchema;
 
 import org.apache.hadoop.hbase.KeyValue;
-import org.apache.hadoop.hbase.client.HTable;
+import org.apache.hadoop.hbase.client.CoprocessorHConnection;
+import org.apache.hadoop.hbase.client.HConnection;
+import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
@@ -55,8 +56,9 @@ public class JoinObserver extends BaseRegionObserver{
 	public int [] tableOffsets = null; //add this for testing in main
 	public int tableIndex; //add this for testing in main
 	
-	private HTable joinTable=null;
+	private HTableInterface joinTable=null;
 	private AbstractRowKeyDistributor keyDistributor;
+	private HConnection con;
 	
 	public JoinObserver() {
 		super();
@@ -66,10 +68,11 @@ public class JoinObserver extends BaseRegionObserver{
 	}
 
 	@Override
-	public void preOpen(ObserverContext<RegionCoprocessorEnvironment> e) {
+	public void preOpen(ObserverContext<RegionCoprocessorEnvironment> e) throws IOException {
 		try {
-			joinTable = new HTable(e.getEnvironment().getConfiguration(), PrefixMatchSchema.JOIN_TABLE_NAME);
-			joinTable.setAutoFlush(false);
+			con = CoprocessorHConnection.getConnectionForEnvironment(e.getEnvironment());
+			
+			//TODO joinTable.setAutoFlush(false);
 		} catch (IOException exc) {
 			logger.error("Unable to initialize JOIN table: "+exc.getMessage());
 		}
@@ -155,6 +158,8 @@ public class JoinObserver extends BaseRegionObserver{
 		}
 		//logger.info("[JoinObserver] postScannerNext: Found the InternalScanner in the internal map");
 		
+		joinTable = con.getTable(PrefixMatchSchema.JOIN_TABLE_NAME);
+		joinTable.setAutoFlush(false);
 		for (Result result : results) {
 			byte[] rowKey = result.getRow();
 			
@@ -180,6 +185,8 @@ public class JoinObserver extends BaseRegionObserver{
 				logger.info(PrefixMatchSchema.TABLE_NAMES[tableIndex]+"[JoinObserver] postScannerNext: Successfully inserted in the join table an empty non join value");
 			}			
 		}
+		
+		joinTable.flushCommits();
 		
 		if (results!=null && results.size()>0){
 			results.clear();
@@ -271,13 +278,13 @@ public class JoinObserver extends BaseRegionObserver{
 		}		
 	}*/
 
-	@Override
+	/*@Override
 	public void postScannerClose(ObserverContext<RegionCoprocessorEnvironment> e, InternalScanner s) throws IOException {
 		if (joinTable!=null){
-			joinTable.flushCommits();
+			//joinTable.flushCommits();
 		}
 		super.postScannerClose(e, s);
-	}
+	}*/
 
 	@Override
 	public void postClose(ObserverContext<RegionCoprocessorEnvironment> e,
