@@ -13,6 +13,7 @@ import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Append;
 import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.hadoop.hbase.client.HTablePool;
+import org.apache.hadoop.hbase.client.Mutation;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
@@ -155,7 +156,7 @@ public class JoinObserver extends BaseRegionObserver{
 		
 		HTableInterface joinTable = e.getEnvironment().getTable(PrefixMatchSchema.JOIN_TABLE_NAME.getBytes());
 		//joinTable.setAutoFlush(false);
-		ArrayList<Append> writes = new ArrayList<Append>(results.size());
+		ArrayList<Mutation> writes = new ArrayList<Mutation>(results.size());
 		
 		for (Result result : results) {
 			byte[] rowKey = result.getRow();
@@ -175,11 +176,11 @@ public class JoinObserver extends BaseRegionObserver{
 				logger.info(PrefixMatchSchema.TABLE_NAMES[tableIndex]+"[JoinObserver] postScannerNext: Successfully inserted in the join table a non join value");
 			}
 			
-			if (nonJoinValues.length==0){
-				Append append = new Append(distributedKey);
-				append.add(PrefixMatchSchema.JOIN_COL_FAM_BYTES, 
-						new byte[]{metaInfo.getTripleId()}, null);
-				writes.add(append);
+			if (nonJoinValues.length==0){//we add this column just to know that it was part of the join
+				Put put = new Put(distributedKey);
+				put.add(PrefixMatchSchema.JOIN_COL_FAM_BYTES, 
+						new byte[]{metaInfo.getTripleId()}, new byte[]{0x00});
+				writes.add(put);
 				logger.info(PrefixMatchSchema.TABLE_NAMES[tableIndex]+"[JoinObserver] postScannerNext: Successfully inserted in the join table an empty non join value");
 			}	
 		}
