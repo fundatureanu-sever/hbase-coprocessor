@@ -55,6 +55,11 @@ public class JoinObserver extends BaseRegionObserver{
 	public static final int BASE_ID_SIZE = 8;
 	
 	private static final int BUCKET_COUNT = 8;//TODO should be a parameter
+	
+	private static final int SPO_DIR = 0x00;
+	private static final int OPS_DIR = 0x10;
+	private static final byte DIR_MASK = (byte)0xF0;
+	
 	public int [] tableOffsets = null; //add this for testing in main
 	public int tableIndex; //add this for testing in main
 	
@@ -201,45 +206,44 @@ public class JoinObserver extends BaseRegionObserver{
 
 	public byte[] extractJoinKeyAndNonJoinValues(byte[] rowKey, MetaInfo tripleJoinInfo, byte[][] nonJoinValues) {	
 		byte startRowKeyPosition = tripleJoinInfo.getStartRowKeyPositions();
-		byte joinPosition = tripleJoinInfo.getJoinPosition();
+		
 		
 		byte objectTypeByte = rowKey[tableOffsets[2]];
 		byte objectType = (byte) (objectTypeByte >> 7 & 1);
 		tripleJoinInfo.adjustJoinKeyLength(objectType);
-		byte []joinKey = new byte[tripleJoinInfo.getJoinKeyLength()];
+		
 		
 		int nonJoinIndex = 0;
 		int joinKeyOffset = 0;
 		
-		if ((joinPosition & (byte) S) == S) {//join on subject
-			Bytes.putBytes(joinKey, joinKeyOffset, rowKey, tableOffsets[0], BASE_ID_SIZE);
-			joinKeyOffset+=BASE_ID_SIZE;
+		byte joinPosition = tripleJoinInfo.getJoinPosition();
+		byte []joinKey = new byte[tripleJoinInfo.getJoinKeyLength()];
+		
+		if ((tripleJoinInfo.getJoinPosition() & (byte) DIR_MASK) == SPO_DIR){
+			joinKeyOffset = joinOnS(rowKey, joinKeyOffset, joinPosition, joinKey);		
+			joinKeyOffset = joinOnP(rowKey, joinKeyOffset, joinPosition, joinKey);		
+			joinOnO(rowKey, joinKeyOffset, joinPosition, joinKey, objectType);
+			
+			nonJoinIndex = fillInNonJoinValuesOnS(rowKey, nonJoinValues, startRowKeyPosition, nonJoinIndex);
+			nonJoinIndex = fillInNonJoinValuesOnP(rowKey, nonJoinValues, startRowKeyPosition, nonJoinIndex);
+			fillInNonJoinValuesOnO(rowKey, nonJoinValues, startRowKeyPosition, nonJoinIndex, objectType);
 		}
-		else if ((startRowKeyPosition & (byte)S) == 0){//if it's not part of the start row key
-			nonJoinValues[nonJoinIndex] = new byte[BASE_ID_SIZE];
-			Bytes.putBytes(nonJoinValues[nonJoinIndex], 0, rowKey, tableOffsets[0], BASE_ID_SIZE);
-			nonJoinIndex++;
-		}
-
-		if ((joinPosition & (byte) P) == P) {//join on predicate
-			Bytes.putBytes(joinKey, joinKeyOffset, rowKey, tableOffsets[1], BASE_ID_SIZE);
-			joinKeyOffset+=BASE_ID_SIZE;
-		}
-		else if ((startRowKeyPosition & (byte)P) == 0){
-			nonJoinValues[nonJoinIndex] = new byte[BASE_ID_SIZE];
-			Bytes.putBytes(nonJoinValues[nonJoinIndex], 0, rowKey, tableOffsets[1], BASE_ID_SIZE);
-			nonJoinIndex++;
+		else{//inverse direction
+			joinKeyOffset = joinOnO(rowKey, joinKeyOffset, joinPosition, joinKey, objectType);
+			joinKeyOffset = joinOnP(rowKey, joinKeyOffset, joinPosition, joinKey);
+			joinOnS(rowKey, joinKeyOffset, joinPosition, joinKey);		
+					
+			nonJoinIndex = fillInNonJoinValuesOnO(rowKey, nonJoinValues, startRowKeyPosition, nonJoinIndex, objectType);
+			nonJoinIndex = fillInNonJoinValuesOnP(rowKey, nonJoinValues, startRowKeyPosition, nonJoinIndex);
+			fillInNonJoinValuesOnS(rowKey, nonJoinValues, startRowKeyPosition, nonJoinIndex);		
 		}
 		
-		if ((joinPosition & (byte) O) == O) {//join on object
-			if (objectType == STRING_TYPE) {
-				Bytes.putBytes(joinKey, joinKeyOffset, rowKey, tableOffsets[2] + 1, BASE_ID_SIZE);
-			}
-			else{//numerical
-				Bytes.putBytes(joinKey, joinKeyOffset, rowKey, tableOffsets[2], TYPED_ID_SIZE);
-			}			
-		}
-		else if ((startRowKeyPosition & (byte) O) == 0) {
+		return joinKey;
+	}
+
+	private int fillInNonJoinValuesOnO(byte[] rowKey, byte[][] nonJoinValues,
+			byte startRowKeyPosition, int nonJoinIndex, byte objectType) {
+		if ((startRowKeyPosition & (byte) O) == 0) {
 			if (objectType == STRING_TYPE) {
 				nonJoinValues[nonJoinIndex] = new byte[BASE_ID_SIZE];
 				Bytes.putBytes(nonJoinValues[nonJoinIndex], 0, rowKey, tableOffsets[2] + 1, BASE_ID_SIZE);
@@ -247,9 +251,64 @@ public class JoinObserver extends BaseRegionObserver{
 				nonJoinValues[nonJoinIndex] = new byte[TYPED_ID_SIZE];
 				Bytes.putBytes(nonJoinValues[nonJoinIndex], 0, rowKey, tableOffsets[2], TYPED_ID_SIZE);
 			}
+			return nonJoinIndex+1;
 		}
 		
-		return joinKey;
+		return nonJoinIndex;
+	}
+
+	private int fillInNonJoinValuesOnP(byte[] rowKey, byte[][] nonJoinValues,
+			byte startRowKeyPosition, int nonJoinIndex) {
+		if ((startRowKeyPosition & (byte)P) == 0){
+			nonJoinValues[nonJoinIndex] = new byte[BASE_ID_SIZE];
+			Bytes.putBytes(nonJoinValues[nonJoinIndex], 0, rowKey, tableOffsets[1], BASE_ID_SIZE);
+			return nonJoinIndex+1;
+		}
+		return nonJoinIndex;
+	}
+
+	private int fillInNonJoinValuesOnS(byte[] rowKey, byte[][] nonJoinValues,
+			byte startRowKeyPosition, int nonJoinIndex) {
+		if ((startRowKeyPosition & (byte)S) == 0){//if it's not part of the start row key
+			nonJoinValues[nonJoinIndex] = new byte[BASE_ID_SIZE];
+			Bytes.putBytes(nonJoinValues[nonJoinIndex], 0, rowKey, tableOffsets[0], BASE_ID_SIZE);
+			return nonJoinIndex+1;
+		}
+		return nonJoinIndex;
+	}
+
+	private int joinOnO(byte[] rowKey, int joinKeyOffset, byte joinPosition,
+			byte[] joinKey, byte objectType) {
+		if ((joinPosition & (byte) O) == O) {//join on object
+			if (objectType == STRING_TYPE) {
+				Bytes.putBytes(joinKey, joinKeyOffset, rowKey, tableOffsets[2] + 1, BASE_ID_SIZE);
+				return joinKeyOffset+BASE_ID_SIZE;
+			}
+			else{//numerical
+				Bytes.putBytes(joinKey, joinKeyOffset, rowKey, tableOffsets[2], TYPED_ID_SIZE);
+				return joinKeyOffset+TYPED_ID_SIZE;
+			}			
+		}
+		
+		return joinKeyOffset;
+	}
+
+	private int joinOnP(byte[] rowKey, int joinKeyOffset, byte joinPosition,
+			byte[] joinKey) {
+		if ((joinPosition & (byte) P) == P) {//join on predicate
+			Bytes.putBytes(joinKey, joinKeyOffset, rowKey, tableOffsets[1], BASE_ID_SIZE);
+			joinKeyOffset+=BASE_ID_SIZE;
+		}
+		return joinKeyOffset;
+	}
+
+	private int joinOnS(byte[] rowKey, int joinKeyOffset, byte joinPosition,
+			byte[] joinKey) {
+		if ((joinPosition & (byte) S) == S) {//join on subject
+			Bytes.putBytes(joinKey, joinKeyOffset, rowKey, tableOffsets[0], BASE_ID_SIZE);
+			return (joinKeyOffset+BASE_ID_SIZE);
+		}
+		return joinKeyOffset;
 	}
 	
 	/*public static void main(String[] args) {

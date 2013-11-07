@@ -5,7 +5,14 @@ import org.apache.hadoop.hbase.util.Bytes;
 /**ASSUMPTION: expecting the input qualifier bytes to be
  * - 2 bytes - join id
  * - 1 byte - triple id
- * - 1 byte - encoding of join positions
+ * - 1 byte - encoding of join positions 
+ * 	TODO add 3 bits to encode the order in which elements should go in the join key
+ * 	0 - {0,1,2} 2
+ *  1 - {1,0,2} 4
+ *  2 - {2,0,1} 8
+ *  3 - {2,1,0} 10
+ *  4 - {0,2,1} 4
+ *  5 - {1,2,0} 8
  * - 1 byte id - for each variable id in a non-join position (in SPOC order)
  * example: S ?p ?o - join by ?o
  *			S - startRowkey
