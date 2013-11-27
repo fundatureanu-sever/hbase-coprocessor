@@ -188,10 +188,11 @@ public class JoinObserver extends BaseRegionObserver{
 						new byte[]{0x00});
 				writes.add(put);
 				
-				joinTable.incrementColumnValue(distributedKey, 
+				/*TODO ASSUMING for now we don't have duplicates in the index tables 
+				  joinTable.incrementColumnValue(distributedKey, 
 						PrefixMatchSchema.JOIN_COL_FAM_BYTES, 
 						PrefixMatchSchema.JOIN_MULTIPLIER_QUAL_BYTES,
-						1, false);
+						1, false);*/
 				logger.info(PrefixMatchSchema.TABLE_NAMES[tableIndex]+"[JoinObserver] postScannerNext: Successfully inserted in the join table an empty non join value");
 			}	
 		}
